@@ -50,10 +50,19 @@ class ModelMnist(ModelBase):
         with tqdm(total=n_epoch) as pbar:
             for i_epoch in range(n_epoch):
                 # training for one epoch
+                grad_global_norm_mean = 0.
+                count_train = 0
+
                 self._sess.run(training_iterator.initializer)
                 while True:
                     try:
-                        self._sess.run(self._train_op, feed_dict={self._handle: training_handle})
+                        _, grad_global_norm = self._sess.run(
+                            [self._train_op, self._grad_global_norm],
+                            feed_dict={self._handle: training_handle}
+                        )
+
+                        count_train += 1
+                        grad_global_norm_mean += (grad_global_norm - grad_global_norm_mean) / count_train
                     except tf.errors.OutOfRangeError:
                         break
 
@@ -85,6 +94,7 @@ class ModelMnist(ModelBase):
                     {
                         self._tb_validation_loss_placeholder: loss_validation,
                         self._tb_validation_accuracy_placeholder: metric_accuracy,
+                        self._tb_grad_global_norm_placeholder: grad_global_norm_mean,
                     }
                 )
 
@@ -115,7 +125,8 @@ class ModelMnist(ModelBase):
                 net = tf.contrib.layers.fully_connected(
                     net,
                     num_outputs=self.get_config("n_hidden_units"),
-                    activation_fn=tf.nn.relu,
+                    # activation_fn=tf.nn.relu,
+                    activation_fn=tf.nn.leaky_relu,
                     scope="layer_{:d}".format(i_layer)
                 )
             net = tf.contrib.layers.fully_connected(
@@ -151,11 +162,11 @@ class ModelMnist(ModelBase):
             )
 
             optimizer = tf.train.AdamOptimizer(learning_rate=self.get_config("lr"))
-            self._train_op = optimizer.minimize(
-                self._loss,
-                global_step=self._global_step,
-                name="train_op"
-            )
+            list_grad_var = optimizer.compute_gradients(self._loss)
+            self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")
+
+            list_grad = map(lambda x: x[0], list_grad_var)
+            self._grad_global_norm = tf.global_norm(list_grad, name="grad_global_norm")
 
         return self
 
@@ -182,13 +193,18 @@ class ModelMnist(ModelBase):
 
     def _add_tensorboard(self):
         # placeholder to log stuff from python
-        self._tb_validation_loss_placeholder = tf.placeholder(tf.float32, shape=[], name="tb_validation_loss")
-        self._tb_validation_accuracy_placeholder = tf.placeholder(tf.float32, shape=[], name="tb_validation_accuracy")
+        self._tb_validation_loss_placeholder = tf.placeholder(tf.float32, shape=[],
+                                                              name="tb_validation_loss_placeholder")
+        self._tb_validation_accuracy_placeholder = tf.placeholder(tf.float32, shape=[],
+                                                                  name="tb_validation_accuracy_placeholder")
+        self._tb_grad_global_norm_placeholder = tf.placeholder(tf.float32, shape=[],
+                                                               name="tb_grad_global_norm_placeholder")
 
         # add summary
         tf.summary.scalar("Validation Loss", self._tb_validation_loss_placeholder)
         tf.summary.scalar("Validation Accuracy", self._tb_validation_accuracy_placeholder)
         tf.summary.scalar("Validation Error", 1 - self._tb_validation_accuracy_placeholder)
+        tf.summary.scalar("Gradient Global Norm", self._tb_grad_global_norm_placeholder)
 
         # logging
         self._tb_merged = tf.summary.merge_all()
