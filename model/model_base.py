@@ -2,6 +2,11 @@ import tensorflow as tf
 
 
 class ModelBase(object):
+    def __init__(self, config):
+        self._config = config
+
+    def get_config(self, key):
+        return self._config[key]
 
     def build(self):
         """
@@ -31,8 +36,11 @@ class ModelBase(object):
 
         # variable initialization / restoration
         if restore_id is None:
-            init = tf.global_variables_initializer()
-            self._sess.run(init)
+            self._sess.run(tf.global_variables_initializer())
+            # self._sess.run(tf.local_variables_initializer())
+            # Instead of a simple local variable initialization here, we might better do so explicitly for where it is
+            # actually needed to avoid unintended behavior
+            # http://ronny.rest/blog/post_2017_09_11_tf_metrics/
         else:
             self.restore(restore_id)
 
@@ -48,11 +56,12 @@ class ModelBase(object):
 
         raise NotImplementedError("This is where model gets restored. Please implement it in your sub-class!")
 
-    def train(self, data_train):
+    def train(self, data_train, **options):
         """
         Define training procedure here
 
         :param data_train: Provided training data
+        :param options: Other options that one would like to specify per training instead of per class instance
         :return: Self
         """
 
