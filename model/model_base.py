@@ -5,8 +5,11 @@ class ModelBase(object):
     def __init__(self, config):
         self._config = config
 
-    def get_config(self, key):
-        return self._config[key]
+    def get_config(self, key, default=None):
+        if default is None:
+            return self._config[key]
+        else:
+            return self._config.get(key, default)
 
     def build(self):
         """

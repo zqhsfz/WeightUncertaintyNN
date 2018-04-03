@@ -51,7 +51,12 @@ class ModelMnist(ModelBase):
 
         # training loop
         with tqdm(total=n_epoch) as pbar:
+            lr = self.get_config("lr")
             for i_epoch in range(n_epoch):
+                # # decay lr
+                # if i_epoch > 1 and i_epoch % 200 == 0:
+                #     lr *= 0.3
+
                 # training for one epoch
                 grad_global_norm_mean = 0.
                 count_train = 0
@@ -61,7 +66,10 @@ class ModelMnist(ModelBase):
                     try:
                         _, grad_global_norm = self._sess.run(
                             [self._train_op, self._grad_global_norm],
-                            feed_dict={self._handle: training_handle}
+                            feed_dict={
+                                self._handle: training_handle,
+                                self._lr_placeholder: lr,
+                            }
                         )
 
                         count_train += 1
@@ -108,7 +116,7 @@ class ModelMnist(ModelBase):
     def _add_placeholder(self):
         with tf.variable_scope("placeholders"):
             # Use feedable iterator so that one can feed data in a flexible way
-            self._handle = tf.placeholder(tf.string, shape=[])
+            self._handle = tf.placeholder(tf.string, shape=[], name="handle")
             iterator = tf.data.Iterator.from_string_handle(
                 self._handle,
                 output_types=(tf.uint8, tf.uint8),
@@ -116,27 +124,41 @@ class ModelMnist(ModelBase):
             )
             input_image, input_label = iterator.get_next()
 
-            self._image_placeholder = tf.cast(input_image, dtype=tf.float32)
-            self._label_placeholder = tf.cast(input_label, dtype=tf.int32)
+            self._image_placeholder = tf.cast(input_image, dtype=tf.float32, name="image_placeholder")
+            self._label_placeholder = tf.cast(input_label, dtype=tf.int32, name="label_placeholder")
+
+            # other placeholders
+            self._lr_placeholder = tf.placeholder(tf.float32, shape=[], name="lr_placeholder")
 
         return self
 
     def _add_classifier(self):
         with tf.variable_scope("classifier"):
-            net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 126
+            net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 128.0
             for i_layer in range(self.get_config("n_layers")):
-                net = tf.contrib.layers.fully_connected(
+                # net = tf.contrib.layers.fully_connected(
+                #     net,
+                #     num_outputs=self.get_config("n_hidden_units"),
+                #     activation_fn=tf.nn.relu,
+                #     scope="layer_{:d}".format(i_layer)
+                # )
+                net = tf.layers.dense(
                     net,
-                    num_outputs=self.get_config("n_hidden_units"),
-                    activation_fn=tf.nn.relu,
-                    # activation_fn=tf.nn.leaky_relu,
-                    scope="layer_{:d}".format(i_layer)
+                    units=self.get_config("n_hidden_units"),
+                    activation=tf.nn.relu,
+                    name="layer_{:d}".format(i_layer)
                 )
-            net = tf.contrib.layers.fully_connected(
+            # net = tf.contrib.layers.fully_connected(
+            #     net,
+            #     num_outputs=self._n_class,
+            #     activation_fn=None,
+            #     scope="layer_output"
+            # )
+            net = tf.layers.dense(
                 net,
-                num_outputs=self._n_class,
-                activation_fn=None,
-                scope="layer_output"
+                units=self._n_class,
+                activation=None,
+                name="layer_output"
             )
 
             self._logits = net
@@ -164,8 +186,12 @@ class ModelMnist(ModelBase):
                 trainable=False
             )
 
-            # optimizer = tf.train.AdamOptimizer(learning_rate=self.get_config("lr"))
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.get_config("lr"))
+            # optimizer = tf.train.AdamOptimizer(
+            #     learning_rate=self.get_config("lr", 1e-3),
+            #     epsilon=self.get_config("adam_epsilon", 1e-8)
+            # )
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
+
             list_grad_var = optimizer.compute_gradients(self._loss)
             self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")
 
@@ -177,7 +203,7 @@ class ModelMnist(ModelBase):
     def _add_prediction(self):
         with tf.variable_scope("prediction"):
             self._pred_prob = tf.nn.softmax(self._logits, name="prediction_prob")
-            self._pred_class = tf.argmax(self._pred_prob, axis=1, name="prediction_class")
+            self._pred_class = tf.argmax(self._logits, axis=1, name="prediction_class")
 
         return self
 
@@ -207,7 +233,7 @@ class ModelMnist(ModelBase):
         # add summary
         tf.summary.scalar("Validation Loss", self._tb_validation_loss_placeholder)
         tf.summary.scalar("Validation Accuracy", self._tb_validation_accuracy_placeholder)
-        tf.summary.scalar("Validation Error", 1 - self._tb_validation_accuracy_placeholder)
+        tf.summary.scalar("Validation Error", 1.0 - self._tb_validation_accuracy_placeholder)
         tf.summary.scalar("Gradient Global Norm", self._tb_grad_global_norm_placeholder)
 
         # logging
