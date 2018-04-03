@@ -12,12 +12,15 @@ class ModelMnist(ModelBase):
         self._n_class = 10
 
     def build(self):
+        # forward propagation
         self._add_placeholder()
         self._add_classifier()
 
+        # loss and back propagation
         self._add_loss()
         self._add_train_op()
 
+        # prediction / evaluation
         self._add_prediction()
         self._add_evaluation()
 
@@ -120,13 +123,13 @@ class ModelMnist(ModelBase):
 
     def _add_classifier(self):
         with tf.variable_scope("classifier"):
-            net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 126   # hell, yeah, this is a magic
+            net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 126
             for i_layer in range(self.get_config("n_layers")):
                 net = tf.contrib.layers.fully_connected(
                     net,
                     num_outputs=self.get_config("n_hidden_units"),
-                    # activation_fn=tf.nn.relu,
-                    activation_fn=tf.nn.leaky_relu,
+                    activation_fn=tf.nn.relu,
+                    # activation_fn=tf.nn.leaky_relu,
                     scope="layer_{:d}".format(i_layer)
                 )
             net = tf.contrib.layers.fully_connected(
@@ -161,7 +164,8 @@ class ModelMnist(ModelBase):
                 trainable=False
             )
 
-            optimizer = tf.train.AdamOptimizer(learning_rate=self.get_config("lr"))
+            # optimizer = tf.train.AdamOptimizer(learning_rate=self.get_config("lr"))
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.get_config("lr"))
             list_grad_var = optimizer.compute_gradients(self._loss)
             self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")
 
