@@ -39,12 +39,12 @@ if __name__ == "__main__":
     dataset_train, dataset_validation, dataset_test = load_mnist(batch_size=128)
     model = ModelMnist(
         config={
-            "n_layers": 3,
-            "n_hidden_units": 400,
+            "n_layers": 1,
+            "n_hidden_units": 800,
             "output_path": "test",
-            "lr": 0.001,
+            "lr": 0.01,
         },
     ).build().initialize()
 
-    model = model.train((dataset_train, dataset_validation), n_epoch=1200)
+    model = model.train((dataset_train, dataset_validation), n_epoch=1000)
     # model = model.train((dataset_train, dataset_test), n_epoch=600)
