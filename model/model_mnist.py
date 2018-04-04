@@ -51,12 +51,8 @@ class ModelMnist(ModelBase):
 
         # training loop
         with tqdm(total=n_epoch) as pbar:
-            lr = self.get_config("lr")
+            # lr = self.get_config("lr")
             for i_epoch in range(n_epoch):
-                # # decay lr
-                # if i_epoch > 1 and i_epoch % 200 == 0:
-                #     lr *= 0.3
-
                 # training for one epoch
                 grad_global_norm_mean = 0.
                 count_train = 0
@@ -68,7 +64,8 @@ class ModelMnist(ModelBase):
                             [self._train_op, self._grad_global_norm],
                             feed_dict={
                                 self._handle: training_handle,
-                                self._lr_placeholder: lr,
+                                # self._lr_placeholder: lr,
+                                self._dropout_placeholder: self.get_config("dropout"),
                             }
                         )
 
@@ -86,7 +83,10 @@ class ModelMnist(ModelBase):
                     try:
                         loss_current, _ = self._sess.run(
                             [self._loss, self._metric_accuracy_update],
-                            feed_dict={self._handle: validation_handle}
+                            feed_dict={
+                                self._handle: validation_handle,
+                                self._dropout_placeholder: 1.0,   # no dropout in validation / testing
+                            }
                         )
 
                         count_validation += 1
@@ -129,6 +129,7 @@ class ModelMnist(ModelBase):
 
             # other placeholders
             self._lr_placeholder = tf.placeholder(tf.float32, shape=[], name="lr_placeholder")
+            self._dropout_placeholder = tf.placeholder(tf.float32, shape=[], name="dropout_placeholder")
 
         return self
 
@@ -148,6 +149,7 @@ class ModelMnist(ModelBase):
                     activation=tf.nn.relu,
                     name="layer_{:d}".format(i_layer)
                 )
+                net = tf.nn.dropout(net, keep_prob=self._dropout_placeholder, name="layer_{:d}_dropout".format(i_layer))
             # net = tf.contrib.layers.fully_connected(
             #     net,
             #     num_outputs=self._n_class,
@@ -186,11 +188,11 @@ class ModelMnist(ModelBase):
                 trainable=False
             )
 
-            # optimizer = tf.train.AdamOptimizer(
-            #     learning_rate=self.get_config("lr", 1e-3),
-            #     epsilon=self.get_config("adam_epsilon", 1e-8)
-            # )
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
+            optimizer = tf.train.AdamOptimizer(
+                learning_rate=self.get_config("lr", 1e-3),
+                epsilon=self.get_config("adam_epsilon", 1e-8)
+            )
+            # optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
 
             list_grad_var = optimizer.compute_gradients(self._loss)
             self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")

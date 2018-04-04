@@ -42,7 +42,9 @@ if __name__ == "__main__":
             "n_layers": 1,
             "n_hidden_units": 800,
             "output_path": "test",
-            "lr": 0.01,
+            "lr": 1e-5,
+            # "adam_epsilon": 0.001,
+            "dropout": 0.5,
         },
     ).build().initialize()
 
