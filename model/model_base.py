@@ -70,21 +70,23 @@ class ModelBase(object):
 
         raise NotImplementedError("This is where training procedure is defined. Please implement it in your sub-class!")
 
-    def predict(self, data_pred):
+    def predict(self, data_pred, **options):
         """
         Define prediction procedure here
 
         :param data_pred: Provided data for prediction
+        :param options: Other options that one would like to specify as external inputs
         :return: Prediction result
         """
 
         raise NotImplementedError("This is where prediction procedure is defined. Please implement it in your sub-class!")
 
-    def evaluate(self, data_eval):
+    def evaluate(self, data_eval, **options):
         """
         Define evaluation procedure here
 
         :param data_eval: Provided data for evaluation
+        :param options: Other options that one would like to specify as external inputs
         :return: Evaluation result
         """
 

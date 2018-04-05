@@ -54,62 +54,100 @@ class ModelMnist(ModelBase):
             # lr = self.get_config("lr")
             for i_epoch in range(n_epoch):
                 # training for one epoch
-                grad_global_norm_mean = 0.
-                count_train = 0
-
                 self._sess.run(training_iterator.initializer)
                 while True:
                     try:
-                        _, grad_global_norm = self._sess.run(
-                            [self._train_op, self._grad_global_norm],
+                        _ = self._sess.run(
+                            self._train_op,
                             feed_dict={
                                 self._handle: training_handle,
                                 # self._lr_placeholder: lr,
                                 self._dropout_placeholder: self.get_config("dropout"),
                             }
                         )
-
-                        count_train += 1
-                        grad_global_norm_mean += (grad_global_norm - grad_global_norm_mean) / count_train
                     except tf.errors.OutOfRangeError:
                         break
+
+                # evaluation on training set
+                result_training = self.evaluate((training_iterator, training_handle))
 
                 # evaluation on validation set
-                loss_validation = 0.
-                count_validation = 0
+                result_validation = self.evaluate((validation_iterator, validation_handle))
 
-                self._sess.run([self._metric_accuracy_initializer, validation_iterator.initializer])
-                while True:
-                    try:
-                        loss_current, _ = self._sess.run(
-                            [self._loss, self._metric_accuracy_update],
-                            feed_dict={
-                                self._handle: validation_handle,
-                                self._dropout_placeholder: 1.0,   # no dropout in validation / testing
-                            }
-                        )
-
-                        count_validation += 1
-                        loss_validation += (loss_current - loss_validation) / count_validation
-                    except tf.errors.OutOfRangeError:
-                        break
-
-                # summary per epoch
+                # update pbar
                 pbar.update(1)
-                pbar.set_description("Validation loss: {:.4f}".format(loss_validation))
+                pbar.set_description("Training loss: {:.4f}".format(result_training["loss"]))
 
-                metric_accuracy = self._sess.run(self._metric_accuracy)
-
+                # update tensorboard
                 self._record_summary(
                     i_epoch,
                     {
-                        self._tb_validation_loss_placeholder: loss_validation,
-                        self._tb_validation_accuracy_placeholder: metric_accuracy,
-                        self._tb_grad_global_norm_placeholder: grad_global_norm_mean,
+                        self._tb_training_loss_placeholder: result_training["loss"],
+                        self._tb_training_accuracy_placeholder: result_training["accuracy"],
+                        self._tb_training_grad_global_norm_placeholder: result_training["grad_global_norm"],
+
+                        self._tb_validation_loss_placeholder: result_validation["loss"],
+                        self._tb_validation_accuracy_placeholder: result_validation["accuracy"],
+                        self._tb_validation_grad_global_norm_placeholder: result_validation["grad_global_norm"],
                     }
                 )
 
         return self
+
+    def evaluate(self, data_eval, **options):
+        """
+        :param data_eval: Tuple of (iterator, string_handle)
+        :param options: Nothing for now
+        :return: A dictionary of
+                 1. loss
+                 2. accuracy
+                 3. grad_global_norm
+        """
+
+        # argument parsing
+        data_eval_iterator, data_eval_handle = data_eval
+
+        # initialization
+        self._sess.run([
+            data_eval_iterator.initializer,       # data initialization
+            self._metric_accuracy_initializer,    # metric of accuracy initialization
+        ])
+
+        # loop through batches
+        count = 0                  # counting on data points
+        count_batch = 0            # counting on updates (batches)
+        loss_all = 0.              # mean of the loss across whole dataset
+        grad_global_norm_all = 0.  # mean of the global gradients across all updates (in one epoch)
+        while True:
+            try:
+                batch_size, loss_batch, grad_global_norm_batch, _ = self._sess.run(
+                    [
+                        self._batch_size,
+                        self._loss,
+                        self._grad_global_norm,
+                        self._metric_accuracy_update,
+                    ],
+                    feed_dict={
+                        self._handle: data_eval_handle,
+                        self._dropout_placeholder: 1.0,  # no dropout in evaluation
+                    }
+                )
+
+                count += batch_size
+                count_batch += 1
+                loss_all += 1.0 * (loss_batch - loss_all) * batch_size / count
+                grad_global_norm_all += 1.0 * (grad_global_norm_batch - grad_global_norm_all) / count_batch
+            except tf.errors.OutOfRangeError:
+                break
+
+        # extract metrics
+        accuracy_all = self._sess.run(self._metric_accuracy)
+
+        return dict(
+            loss=loss_all,
+            accuracy=accuracy_all,
+            grad_global_norm=grad_global_norm_all,
+        )
 
     ####################################################################################################################
 
@@ -131,18 +169,15 @@ class ModelMnist(ModelBase):
             self._lr_placeholder = tf.placeholder(tf.float32, shape=[], name="lr_placeholder")
             self._dropout_placeholder = tf.placeholder(tf.float32, shape=[], name="dropout_placeholder")
 
+            # utilities
+            self._batch_size = tf.shape(self._label_placeholder)[0]
+
         return self
 
     def _add_classifier(self):
         with tf.variable_scope("classifier"):
             net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 128.0
             for i_layer in range(self.get_config("n_layers")):
-                # net = tf.contrib.layers.fully_connected(
-                #     net,
-                #     num_outputs=self.get_config("n_hidden_units"),
-                #     activation_fn=tf.nn.relu,
-                #     scope="layer_{:d}".format(i_layer)
-                # )
                 net = tf.layers.dense(
                     net,
                     units=self.get_config("n_hidden_units"),
@@ -150,12 +185,6 @@ class ModelMnist(ModelBase):
                     name="layer_{:d}".format(i_layer)
                 )
                 net = tf.nn.dropout(net, keep_prob=self._dropout_placeholder, name="layer_{:d}_dropout".format(i_layer))
-            # net = tf.contrib.layers.fully_connected(
-            #     net,
-            #     num_outputs=self._n_class,
-            #     activation_fn=None,
-            #     scope="layer_output"
-            # )
             net = tf.layers.dense(
                 net,
                 units=self._n_class,
@@ -225,18 +254,34 @@ class ModelMnist(ModelBase):
 
     def _add_tensorboard(self):
         # placeholder to log stuff from python
+        self._tb_training_loss_placeholder = tf.placeholder(tf.float32, shape=[],
+                                                            name="tb_training_loss_placeholder")
+        self._tb_training_accuracy_placeholder = tf.placeholder(tf.float32, shape=[],
+                                                                name="tb_training_accuracy_placeholder")
+        self._tb_training_grad_global_norm_placeholder = tf.placeholder(
+            tf.float32, shape=[],
+            name="tb_training_grad_global_norm_placeholder"
+        )
+
         self._tb_validation_loss_placeholder = tf.placeholder(tf.float32, shape=[],
                                                               name="tb_validation_loss_placeholder")
         self._tb_validation_accuracy_placeholder = tf.placeholder(tf.float32, shape=[],
                                                                   name="tb_validation_accuracy_placeholder")
-        self._tb_grad_global_norm_placeholder = tf.placeholder(tf.float32, shape=[],
-                                                               name="tb_grad_global_norm_placeholder")
+        self._tb_validation_grad_global_norm_placeholder = tf.placeholder(
+            tf.float32, shape=[],
+            name="tb_validation_grad_global_norm_placeholder"
+        )
 
         # add summary
+        tf.summary.scalar("Training Loss", self._tb_training_loss_placeholder)
+        tf.summary.scalar("Training Accuracy", self._tb_training_accuracy_placeholder)
+        tf.summary.scalar("Training Error", 1.0 - self._tb_training_accuracy_placeholder)
+        tf.summary.scalar("Training Gradient", self._tb_training_grad_global_norm_placeholder)
+
         tf.summary.scalar("Validation Loss", self._tb_validation_loss_placeholder)
         tf.summary.scalar("Validation Accuracy", self._tb_validation_accuracy_placeholder)
         tf.summary.scalar("Validation Error", 1.0 - self._tb_validation_accuracy_placeholder)
-        tf.summary.scalar("Gradient Global Norm", self._tb_grad_global_norm_placeholder)
+        tf.summary.scalar("Validation Gradient", self._tb_validation_grad_global_norm_placeholder)
 
         # logging
         self._tb_merged = tf.summary.merge_all()
