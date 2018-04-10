@@ -1,3 +1,4 @@
+# Baseline using normal DNN with dropout regularization
 import tensorflow as tf
 from tqdm import tqdm
 

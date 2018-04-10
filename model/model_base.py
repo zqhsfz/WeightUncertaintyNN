@@ -1,3 +1,4 @@
+# Templates for all models
 import tensorflow as tf
 
 
