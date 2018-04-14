@@ -31,4 +31,11 @@ def load_mnist(batch_size):
     dataset_test = tf.data.Dataset.from_tensor_slices((x_test, y_test))
     dataset_test = dataset_test.batch(batch_size)
 
-    return dataset_train, dataset_validation, dataset_test
+    # metadata
+    metadata = {
+        "train_size": x_train.shape[0],
+        "validation_size": x_validation.shape[0],
+        "test_size": x_test.shape[0],
+    }
+
+    return dataset_train, dataset_validation, dataset_test, metadata

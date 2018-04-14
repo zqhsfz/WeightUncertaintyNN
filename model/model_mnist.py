@@ -52,7 +52,7 @@ class ModelMnist(ModelBase):
 
         # training loop
         with tqdm(total=n_epoch) as pbar:
-            # lr = self.get_config("lr")
+            lr = self.get_config("lr")
             for i_epoch in range(n_epoch):
                 # training for one epoch
                 self._sess.run(training_iterator.initializer)
@@ -62,7 +62,7 @@ class ModelMnist(ModelBase):
                             self._train_op,
                             feed_dict={
                                 self._handle: training_handle,
-                                # self._lr_placeholder: lr,
+                                self._lr_placeholder: lr,
                                 self._dropout_placeholder: self.get_config("dropout"),
                             }
                         )
@@ -218,11 +218,11 @@ class ModelMnist(ModelBase):
                 trainable=False
             )
 
-            optimizer = tf.train.AdamOptimizer(
-                learning_rate=self.get_config("lr", 1e-3),
-                epsilon=self.get_config("adam_epsilon", 1e-8)
-            )
-            # optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
+            # optimizer = tf.train.AdamOptimizer(
+            #     learning_rate=self.get_config("lr", 1e-3),
+            #     epsilon=self.get_config("adam_epsilon", 1e-8)
+            # )
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
 
             list_grad_var = optimizer.compute_gradients(self._loss)
             self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")

@@ -3,16 +3,26 @@ from model.model_mnist_bayes import ModelMnistBayes
 from run.utils import load_mnist
 
 if __name__ == "__main__":
-    dataset_train, dataset_validation, dataset_test = load_mnist(batch_size=128)
+    batch_size = 100
+    dataset_train, dataset_validation, dataset_test, metadata = load_mnist(batch_size=batch_size)
     model = ModelMnistBayes(
         config={
+            # IO
+            "output_path": "test",
+            # network
             "n_layers": 1,
             "n_hidden_units": 800,
-            "output_path": "test",
-            "lr": 1e-5,
-            # "adam_epsilon": 0.001,
-            "dropout": 1.0,
+            "lr": 0.01,
+            # prior
+            "prior_ratio": 0.5,
+            "prior_log_sigma1": 0.,
+            "prior_log_sigma2": -6.,
         },
     ).build().initialize()
 
-    # model = model.train((dataset_train, dataset_validation), n_epoch=1000)
+    model = model.train(
+        (dataset_train, dataset_validation),
+        n_epoch=1000,
+        n_batch_train=metadata["train_size"] / batch_size,
+        n_batch_validation=metadata["validation_size"] / batch_size,
+    )
