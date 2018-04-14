@@ -7,15 +7,15 @@ from run.utils import load_mnist
 
 
 if __name__ == "__main__":
-    dataset_train, dataset_validation, dataset_test = load_mnist(batch_size=128)
+    dataset_train, dataset_validation, dataset_test, metadata = load_mnist(batch_size=128)
     model = ModelMnist(
         config={
             "n_layers": 1,
             "n_hidden_units": 800,
             "output_path": "test",
-            "lr": 1e-5,
+            "lr": 0.01,
             # "adam_epsilon": 0.001,
-            "dropout": 0.5,
+            "dropout": 1.0,
         },
     ).build().initialize()
 
