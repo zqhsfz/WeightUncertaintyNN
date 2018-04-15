@@ -25,6 +25,9 @@ class ModelMnist(ModelBase):
         self._add_prediction()
         self._add_evaluation()
 
+        # add saver
+        self._saver = tf.train.Saver(max_to_keep=10)
+
         return self
 
     def train(self, data_train, **options):
@@ -149,6 +152,25 @@ class ModelMnist(ModelBase):
             accuracy=accuracy_all,
             grad_global_norm=grad_global_norm_all,
         )
+
+    def restore(self, restore_id):
+        print "\n===> Restoring Model {:d} ... <===\n".format(restore_id)
+
+        restore_path = "{:s}/model-{:d}".format(self.get_config("model_path"), restore_id)
+        restore_path = restore_path.replace("//", "/")
+
+        self._saver.restore(self._sess, save_path=restore_path)
+
+        return self
+
+    def save(self, identifier):
+        print "\n===> Saving Model {:d} ... <===\n".format(identifier)
+
+        save_path = "{:s}/models/model-{:d}".format(self.get_config("output_path"), identifier)
+
+        self._saver.save(self._sess, save_path=save_path)
+
+        return self
 
     ####################################################################################################################
 

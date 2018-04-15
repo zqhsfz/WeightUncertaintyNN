@@ -78,6 +78,10 @@ class ModelMnistBayes(ModelMnist):
                     }
                 )
 
+                # save model
+                if i_epoch % self.get_config("model_save_freq") == 0:
+                    self.save(i_epoch)
+
         return self
 
     def evaluate(self, data_eval, **options):
@@ -155,14 +159,14 @@ class ModelMnistBayes(ModelMnist):
                 shape=shape,
                 dtype=tf.float32,
                 trainable=True,
-                initializer=tf.random_normal_initializer(),
+                initializer=tf.random_normal_initializer(mean=0., stddev=1.0),
             )
             rho = tf.get_variable(
                 name="rho",
                 shape=shape,
                 dtype=tf.float32,
                 trainable=True,
-                initializer=tf.constant_initializer(-1.),
+                initializer=tf.constant_initializer(-3.),
             )
             scale = tf.nn.softplus(rho, name="scale")
 
@@ -218,7 +222,7 @@ class ModelMnistBayes(ModelMnist):
         with tf.variable_scope(scope):
             # obtain log-probability of the sampled weight
             dist = tf.distributions.Normal(loc=broadcast(loc), scale=broadcast(scale),
-                                           validate_args=False, allow_nan_stats=False, name="NormalDist")
+                                           validate_args=True, allow_nan_stats=False, name="NormalDist")
 
             log_p = dist.log_prob(weights, name="log_p")  # shape: [n_sample] + dist_shape
 
@@ -441,7 +445,6 @@ class ModelMnistBayes(ModelMnist):
             #
 
             self._pred_class = pred_class[0, :]
-
 
         return self
 

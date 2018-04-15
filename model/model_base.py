@@ -1,5 +1,6 @@
 # Templates for all models
 import tensorflow as tf
+import dill
 
 
 class ModelBase(object):
@@ -38,6 +39,9 @@ class ModelBase(object):
         # add tensorboard
         self._add_tensorboard()
 
+        # save config file to path
+        dill.dump(self._config, open("{:s}/config.dill".format(self.get_config("output_path")), "w"))
+
         # variable initialization / restoration
         if restore_id is None:
             self._sess.run(tf.global_variables_initializer())
@@ -59,6 +63,16 @@ class ModelBase(object):
         """
 
         raise NotImplementedError("This is where model gets restored. Please implement it in your sub-class!")
+
+    def save(self, identifier):
+        """
+        Save a model with identifier
+
+        :param identifier: Model id
+        :return: Self
+        """
+
+        raise NotImplementedError("This is where model is saved. Please implement it in your sub-class!")
 
     def train(self, data_train, **options):
         """
