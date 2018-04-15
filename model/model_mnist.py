@@ -153,6 +153,20 @@ class ModelMnist(ModelBase):
             grad_global_norm=grad_global_norm_all,
         )
 
+    def evaluate_standalone(self, data_eval, **options):
+        """
+        Run stand-alone evaluation
+
+        :param data_eval: Dataset
+        :param options: the same options to be used by self.evaluate()
+        :return: the same output returned by self.evaluate()
+        """
+
+        iterator = data_eval.make_initializable_iterator()
+        handle = self._sess.run(iterator.string_handle())
+
+        return self.evaluate((iterator, handle), **options)
+
     def restore(self, restore_id):
         print "\n===> Restoring Model {:d} ... <===\n".format(restore_id)
 
