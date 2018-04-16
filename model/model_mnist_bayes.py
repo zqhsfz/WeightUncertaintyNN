@@ -159,14 +159,16 @@ class ModelMnistBayes(ModelMnist):
                 shape=shape,
                 dtype=tf.float32,
                 trainable=True,
-                initializer=tf.random_normal_initializer(mean=0., stddev=1.0),
+                # initializer=tf.random_normal_initializer(mean=0., stddev=1.),
+                initializer=tf.contrib.layers.xavier_initializer(),
             )
             rho = tf.get_variable(
                 name="rho",
                 shape=shape,
                 dtype=tf.float32,
                 trainable=True,
-                initializer=tf.constant_initializer(-3.),
+                # initializer=tf.constant_initializer(-3.),
+                initializer=tf.random_normal_initializer(mean=-3., stddev=0.1)
             )
             scale = tf.nn.softplus(rho, name="scale")
 
@@ -220,9 +222,14 @@ class ModelMnistBayes(ModelMnist):
                 return tensor
 
         with tf.variable_scope(scope):
+            # broadcast loc / scale
+            loc_broadcast = broadcast(loc)
+            scale_broadcast = broadcast(scale)
+
             # obtain log-probability of the sampled weight
-            dist = tf.distributions.Normal(loc=broadcast(loc), scale=broadcast(scale),
+            dist = tf.distributions.Normal(loc=loc_broadcast, scale=scale_broadcast,
                                            validate_args=True, allow_nan_stats=False, name="NormalDist")
+            # dist = tf.distributions.Normal(loc=loc_broadcast, scale=scale_broadcast, name="NormalDist")
 
             log_p = dist.log_prob(weights, name="log_p")  # shape: [n_sample] + dist_shape
 

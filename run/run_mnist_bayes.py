@@ -11,8 +11,9 @@ import shutil
 if __name__ == "__main__":
     # setting
     batch_size = 100
-    config_name_in = "default-repeat-1"  # None
-    config_name_out = "default-repeate-1-continue-1"  # "default-repeat-1"
+    config_name_in = None
+    config_name_out = "pi025_logsigma1-1_logsigma2-6"
+    n_epoch = 1000
 
     # construct model
     model = ModelMnistBayes(
@@ -20,19 +21,23 @@ if __name__ == "__main__":
             # IO
             "output_path": "result/{:s}/".format(config_name_out),  # path to dump all outputs (logs, models, etc.)
             "model_path": "result/{:s}/models/".format(config_name_in),  # path to load cached model
-            "model_save_freq": 50,
+            "model_save_freq": 100,
             # network
             "n_layers": 2,
             "n_hidden_units": 400,
-            "lr": 0.01,
+            "lr": 1e-4,
             # prior
             "prior_ratio": 0.25,
-            "prior_log_sigma1": 0.,
+            "prior_log_sigma1": -1.,
             "prior_log_sigma2": -6.,
             # sampling
             "n_sample": 1,
         },
-    ).build().initialize(150)
+    ).build().initialize()
+
+    # No need to touch codes below for running purpose
+    ####################################################################################################################
+    # No need to touch codes below for running purpose
 
     # load partition indices, if needed
     if config_name_in is None:
@@ -63,7 +68,7 @@ if __name__ == "__main__":
     # training
     model = model.train(
         (dataset_train, dataset_validation),
-        n_epoch=1000,
+        n_epoch=n_epoch,
         n_batch_train=metadata["train_size"] / batch_size,
         n_batch_validation=metadata["validation_size"] / batch_size,
     )
