@@ -12,7 +12,7 @@ if __name__ == "__main__":
     # setting
     batch_size = 100
     config_name_in = None
-    config_name_out = "pi025_logsigma1-1_logsigma2-6"
+    config_name_out = "2layer_1200units_lr1e-3"
     n_epoch = 1000
 
     # construct model
@@ -24,11 +24,11 @@ if __name__ == "__main__":
             "model_save_freq": 100,
             # network
             "n_layers": 2,
-            "n_hidden_units": 400,
+            "n_hidden_units": 1200,
             "lr": 1e-4,
             # prior
-            "prior_ratio": 0.25,
-            "prior_log_sigma1": -1.,
+            "prior_ratio": 0.5,
+            "prior_log_sigma1": -0.,
             "prior_log_sigma2": -6.,
             # sampling
             "n_sample": 1,
