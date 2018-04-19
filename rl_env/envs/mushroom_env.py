@@ -7,19 +7,58 @@ from gym import error, spaces, utils
 from gym.utils import seeding
 
 import pandas as pd
+import numpy as np
 
 
 class MushroomEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, data_path):
+        # load data
+        # At this moment, we still have strong assumption on input data that all feature columns are one-hot columns
         self._data = pd.read_parquet(data_path)
+        self._n_sample = self._data.shape[0]
+
+        # define observation / action space
+        self._n_obs = self._data.shape[1] - 1  # exclude the label
+        self.observation_space = spaces.MultiBinary(self._n_obs)
+        self.action_space = spaces.Discrete(2)  # eat: 1, do nothing: 0
+
+        # state is the current row of dataframe being sampled
+        # as contextual bandit problem, it is actually stateless. We set this way so that env can interact with input
+        # action to determine the reward. Evolution to next state is completely independent of current state / action.
+        self._state = None
 
     def reset(self):
-        pass
+        self._state = self._sample()
+        return self.get_observation(), 0., False, None
 
     def step(self, action):
-        pass
+        # get reward
+        edible = self._state[0]
+        if action == 0:
+            # do nothing
+            reward = 0.
+        else:
+            # eat it
+            assert action == 1
+            if edible:
+                reward = 5.
+            else:
+                reward = -15.
+
+        # update to next state
+        self._state = self._sample()
+
+        # return
+        return self.get_observation(), reward, False, None
 
     def render(self, mode='human'):
         pass
+
+    def get_observation(self):
+        return self._state.tolist()[1:]
+
+    def _sample(self):
+        index = np.random.randint(low=0, high=self._n_sample)
+        return self._data.iloc[index]
