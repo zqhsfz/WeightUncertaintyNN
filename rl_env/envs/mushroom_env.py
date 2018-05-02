@@ -13,7 +13,16 @@ import numpy as np
 class MushroomEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, data_path):
+    def __init__(self, data_path=None):
+        self._data = None
+        self._n_sample = None
+        self._n_obs = None
+        self._state = None
+
+        if data_path is not None:
+            self.load_data(data_path)
+
+    def load_data(self, data_path):
         # load data
         # At this moment, we still have strong assumption on input data that all feature columns are one-hot columns
         self._data = pd.read_parquet(data_path)
@@ -28,6 +37,8 @@ class MushroomEnv(gym.Env):
         # as contextual bandit problem, it is actually stateless. We set this way so that env can interact with input
         # action to determine the reward. Evolution to next state is completely independent of current state / action.
         self._state = None
+
+        return self
 
     def reset(self):
         self._state = self._sample()
@@ -45,7 +56,10 @@ class MushroomEnv(gym.Env):
             if edible:
                 reward = 5.
             else:
-                reward = -15.
+                if np.random.rand() < 0.5:
+                    reward = -35.
+                else:
+                    reward = 5.
 
         # update to next state
         self._state = self._sample()
