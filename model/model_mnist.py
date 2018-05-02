@@ -96,6 +96,10 @@ class ModelMnist(ModelBase):
                     }
                 )
 
+                # save model
+                if (i_epoch % self.get_config("model_save_freq") == 0) or (i_epoch == n_epoch - 1):
+                    self.save(i_epoch)
+
         return self
 
     def evaluate(self, data_eval, **options):
