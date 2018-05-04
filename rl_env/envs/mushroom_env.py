@@ -44,7 +44,7 @@ class MushroomEnv(gym.Env):
         self._state = self._sample()
         return self.get_observation(), 0., False, None
 
-    def step(self, action):
+    def step(self, action, move_next=True):
         # get reward
         edible = self._state[0]
         if action == 0:
@@ -61,17 +61,33 @@ class MushroomEnv(gym.Env):
                 else:
                     reward = 5.
 
-        # update to next state
-        self._state = self._sample()
+        if move_next:
+            # update to next state
+            self._state = self._sample()
 
-        # return
-        return self.get_observation(), reward, False, None
+            # return
+            return self.get_observation(), reward, False, None
+        else:
+            return reward
+
+    def oracle(self):
+        """
+        Return optimal policy with truth information
+        :return: action
+        """
+
+        if self._state[0]:
+            action = 1
+        else:
+            action = 0
+
+        return action
 
     def render(self, mode='human'):
         pass
 
     def get_observation(self):
-        return self._state.tolist()[1:]
+        return np.array(self._state.tolist()[1:])
 
     def _sample(self):
         index = np.random.randint(low=0, high=self._n_sample)
