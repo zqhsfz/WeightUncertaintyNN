@@ -3,6 +3,10 @@ import tensorflow as tf
 import model.utils_bbp as utils
 from model.model_base import ModelBase
 import os
+from collections import deque
+import numpy as np
+from tqdm import tqdm
+import dill
 
 
 class ModelMushroomRL(ModelBase):
@@ -51,8 +55,98 @@ class ModelMushroomRL(ModelBase):
 
         return self
 
-    def train(self, data_train, **options):
-        pass
+    def train(self, env, **options):
+        """
+        Training procedure while interacting with the environment
+
+        :param env: Provided environment to interact with
+        :param options: Contain following items:
+                        1. buffer_size: Size of buffer
+                        2. batch_size: The mini-batch size to be used in buffer
+                        3. n_updates: Number of batches being used within a buffer for each back-propagation.
+                                      -1 means using all.
+                        4. train_steps: Total number of steps for training
+                        5. sampled_stepds: Number of steps in each sampling
+        :return: Self
+        """
+
+        # option parsing
+        buffer_size = options["buffer_size"]
+        batch_size = options["batch_size"]
+        n_updates = options["n_updates"]
+        train_steps = options["train_steps"]
+        sampled_steps = options["sampled_steps"]
+
+        # reset environment
+        obs, _, _, _ = env.reset()
+
+        # prepare buffer and history
+        buffer = deque([], maxlen=buffer_size)
+        history = []
+        cumulative_regret = 0.
+
+        # loop through
+        i_step = 0
+        pbar = tqdm(total=train_steps)
+        while i_step < train_steps:
+            # move forward with current policy
+            sampled_paths = self.predict(env, n_step=sampled_steps, reset=True)
+
+            # add to buffer
+            buffer.extend(map(lambda x: (x[0], x[1], x[2]), sampled_paths))
+
+            # add to history
+            history += sampled_paths
+            cumulative_regret += sum(map(lambda x: x[3] - x[2], sampled_paths))
+
+            # prepare batches
+            buffer_index_array_shuffled = np.random.permutation(len(buffer))
+            buffer_index_batches = utils.prepare_batches(
+                buffer_index_array_shuffled,
+                batch_size=batch_size,
+                keep_remainder=False
+            )
+
+            # select batches randomly
+            # since we already shuffle the indices, we will just pick the first n_batch
+            if n_updates > 0:
+                buffer_index_batches = buffer_index_batches[:n_updates]
+
+            # loop through batches for updates
+            features, actions, rewards = zip(*buffer)
+            features = np.array(features)
+            actions = np.array(actions)
+            rewards = np.array(rewards)
+
+            n_batches = len(buffer_index_batches)
+            for i_batch, index_batch in enumerate(buffer_index_batches):
+                features_batch = features[index_batch]
+                actions_batch = actions[index_batch]
+                rewards_batch = rewards[index_batch]
+
+                self._sess.run(self._train_op,
+                               feed_dict={
+                                   self._feature_placeholder: features_batch,
+                                   self._action_placeholder: actions_batch,
+                                   self._reward_placeholder: rewards_batch,
+                                   self._kl_schedule: 1. / (2**(i_batch+1) - 2**((i_batch+1) - n_batches)),
+                               })
+
+            # tensorboard
+            self._record_summary(i_step,
+                                 feed_dict={
+                                     self._tb_cumulative_regret: cumulative_regret,
+                                 })
+
+            # next step
+            i_step += 1
+            pbar.update(1)
+            pbar.set_description("Cumulative Regret: {:.4f}".format(cumulative_regret))
+
+        # dump history to disk
+        dill.dump(history, open("{:s}/history.dill".format(self.get_config("output_path")), "w"))
+
+        return self
 
     def predict(self, env, **options):
         """
@@ -61,14 +155,19 @@ class ModelMushroomRL(ModelBase):
         :param env: Provided environment to interact with
         :param options: Contain following items:
                         1. n_step: Number of steps to be executed
+                        2. reset: Whether reset the environment
         :return: List of (context, chosen action, observed reward, optimal reward) in the same order of execution
         """
 
         # option parsing
         n_step = options["n_step"]
+        reset = options["reset"]
 
         # reset environment
-        obs, _, _, _ = env.reset()
+        if reset:
+            obs, _, _, _ = env.reset()
+        else:
+            obs = env.get_observation()
 
         # function returning expected reward
         def reward_function(observation, action):
@@ -102,42 +201,40 @@ class ModelMushroomRL(ModelBase):
         return history
 
     def evaluate(self, data_eval, **options):
-        """
-        No evaluation, since it would be done in prediction
-        """
         pass
 
     ####################################################################################################################
 
     def _add_placeholder(self):
-        # context from mushroom
-        # assumed to be one-hot encoded.
-        self._feature_placeholder = tf.placeholder(
-            tf.int32,
-            shape=[None, self._feature_size],
-            name="feature_placeholder"
-        )
+        with tf.variable_scope("placeholder"):
+            # context from mushroom
+            # assumed to be one-hot encoded.
+            self._feature_placeholder = tf.placeholder(
+                tf.int32,
+                shape=[None, self._feature_size],
+                name="feature_placeholder"
+            )
 
-        # action index
-        # notice that this is index, before onehot encoding
-        self._action_placeholder = tf.placeholder(
-            tf.int32,
-            shape=[None],
-            name="action_placeholder"
-        )
+            # action index
+            # notice that this is index, before onehot encoding
+            self._action_placeholder = tf.placeholder(
+                tf.int32,
+                shape=[None],
+                name="action_placeholder"
+            )
 
-        # rewards
-        self._reward_placeholder = tf.placeholder(
-            tf.float32,
-            shape=[None],
-            name="reward_placeholder"
-        )
+            # rewards
+            self._reward_placeholder = tf.placeholder(
+                tf.float32,
+                shape=[None],
+                name="reward_placeholder"
+            )
 
-        # kl scheduler
-        self._kl_schedule = tf.placeholder(tf.float32, shape=[], name="kl_schedule")
+            # kl scheduler
+            self._kl_schedule = tf.placeholder(tf.float32, shape=[], name="kl_schedule")
 
-        # batch size, for kl scheduling purpose
-        self._batch_size = tf.shape(self._reward_placeholder)[0]
+            # batch size, for kl scheduling purpose
+            self._batch_size = tf.shape(self._reward_placeholder)[0]
 
         return self
 
@@ -345,5 +442,35 @@ class ModelMushroomRL(ModelBase):
         with tf.variable_scope("prediction"):
             # [batch_size]
             self._predicted_reward = tf.reduce_mean(self._expected_reward, axis=0, name="predicted_reward")
+
+        return self
+
+    def _add_tensorboard(self):
+        # placeholder to log stuff from python
+        self._tb_cumulative_regret = tf.placeholder(tf.float32, shape=[], name="tb_cumulative_regret")
+
+        # add to summary
+        tf.summary.scalar("Cumulative Regret", self._tb_cumulative_regret)
+
+        # logging
+        self._tb_merged = tf.summary.merge_all()
+        self._tb_file_writer = tf.summary.FileWriter(
+            "{:s}/log".format(self.get_config("output_path")),
+            self._sess.graph
+        )
+
+        return self
+
+    def _record_summary(self, t, feed_dict):
+        """
+        Plugin for passing python information to tensorboard
+
+        :param t: step index. The step unit in tensorboard
+        :param feed_dict: Input feed dictionary as specified in _add_tensorboard()
+        :return: Self
+        """
+
+        summary = self._sess.run(self._tb_merged, feed_dict=feed_dict)
+        self._tb_file_writer.add_summary(summary, t)
 
         return self

@@ -95,3 +95,26 @@ def get_weight_log_prob(scope, weights, loc, scale):
         # log_p: [n_sample] + dist_shape
         # log_p_reduced: [n_sample]
         return log_p, log_p_reduced
+
+
+def prepare_batches(sequence, batch_size, keep_remainder):
+    """
+    Turn a sequence of objects to batches
+
+    :param sequence: Input list
+    :param batch_size: Size of batch
+    :param keep_remainder: In case one batch is smaller than batch_size, whether we keep it or not
+    :return: List of batches
+    """
+
+    batch_list = []
+    sequence_left = sequence
+    while len(sequence_left) > 0:
+        if len(sequence_left) >= batch_size or keep_remainder:
+            batch = sequence_left[:batch_size]
+            batch_list.append(batch)
+
+        sequence_left = sequence_left[batch_size:]
+
+    return batch_list
+

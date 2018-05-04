@@ -27,7 +27,17 @@ if __name__ == "__main__":
         }
     ).build().initialize()
 
-    # run a test sampling
-    history = model.predict(env, n_step=100)
-    for obs, action, reward, optimal_reward in history:
-        print action, reward, optimal_reward
+    # # run a test sampling
+    # history = model.predict(env, n_step=100)
+    # for obs, action, reward, optimal_reward in history:
+    #     print action, reward, optimal_reward
+
+    # training
+    model.train(
+        env,
+        buffer_size=4096,
+        batch_size=64,
+        n_updates=64,
+        train_steps=50000,
+        sampled_steps=1,
+    )
