@@ -15,6 +15,7 @@ class ModelMushroomRL(ModelBase):
 
         self._feature_size = 117
         self._n_action = 2
+        self._reward_list = [5.0, 0.0, -35.0]
 
     def build(self):
         # forward propagation
@@ -124,11 +125,13 @@ class ModelMushroomRL(ModelBase):
                 actions_batch = actions[index_batch]
                 rewards_batch = rewards[index_batch]
 
+                reward_indices_batch = map(lambda reward: self._reward_list.index(reward), rewards_batch)
+
                 self._sess.run(self._train_op,
                                feed_dict={
                                    self._feature_placeholder: features_batch,
                                    self._action_placeholder: actions_batch,
-                                   self._reward_placeholder: rewards_batch,
+                                   self._reward_index_placeholder: reward_indices_batch,
                                    self._kl_schedule: 1. / (2**(i_batch+1) - 2**((i_batch+1) - n_batches)),
                                })
 
@@ -223,18 +226,18 @@ class ModelMushroomRL(ModelBase):
                 name="action_placeholder"
             )
 
-            # rewards
-            self._reward_placeholder = tf.placeholder(
-                tf.float32,
+            # reward index
+            self._reward_index_placeholder = tf.placeholder(
+                tf.int32,
                 shape=[None],
-                name="reward_placeholder"
+                name="reward_index_placeholder"
             )
 
             # kl scheduler
             self._kl_schedule = tf.placeholder(tf.float32, shape=[], name="kl_schedule")
 
             # batch size, for kl scheduling purpose
-            self._batch_size = tf.shape(self._reward_placeholder)[0]
+            self._batch_size = tf.shape(self._action_placeholder)[0]
 
         return self
 
@@ -310,7 +313,7 @@ class ModelMushroomRL(ModelBase):
 
                     # determine output dimension
                     if i_layer == n_layers:
-                        output_dim = 1
+                        output_dim = 3  # corresponding to reward list
                     else:
                         output_dim = self.get_config("n_hidden_units")
 
@@ -360,9 +363,7 @@ class ModelMushroomRL(ModelBase):
 
             # cache last output as reward
             # shape: [n_sample, batch_size, n_class]
-            # since n_class = 1 here, we squeeze the last dimension
-            # shape: [n_sample, batch_size]
-            self._expected_reward = tf.squeeze(net, axis=2, name="expected_reward")
+            self._logits = net
 
             # cache weights posterior / prior
             self._weights_logprob_posterior = weights_logprob_posterior
@@ -375,22 +376,22 @@ class ModelMushroomRL(ModelBase):
         with tf.variable_scope("loss"):
             # P(D|w) / likelihood
             with tf.variable_scope("likelihood"):
-                # shape of reward_placeholder: [batch_size]
-                # Need to expand it to be consistent with expected reward: [n_sample, batch_size]
-                reward_expanded = tf.expand_dims(self._reward_placeholder, axis=0, name="label_expansion")
-                reward_expanded = reward_expanded + tf.zeros(shape=[n_sample, 1], dtype=tf.float32)
+                # shape of reward_index_placeholder: [batch_size]
+                # Need to expand it to be consistent with logits: [n_sample, batch_size]
+                reward_index_expanded = tf.expand_dims(self._reward_index_placeholder,
+                                                       axis=0, name="reward_index_expansion")
+                reward_index_expanded = reward_index_expanded + tf.zeros(shape=[n_sample, 1], dtype=tf.int32)
 
-                # compute mean-squared error, which is negative of log-p
+                # compute cross-entropy, which is negative of log-p
                 # shape should be same as label: [n_sample, batch_size]
-                squared_loss = tf.losses.mean_squared_error(
-                    labels=reward_expanded,
-                    predictions=self._expected_reward,
-                    scope="squared_loss",
-                    reduction=tf.losses.Reduction.NONE
+                ce = tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    labels=reward_index_expanded,
+                    logits=self._logits,
+                    name="cross_entropy"
                 )
 
                 # Take average across all dimensions (i.e. across both sampling and batches)
-                mse = tf.reduce_mean(squared_loss, name="mean_squared_loss")
+                ce_reduced = tf.reduce_mean(ce, name="cross_entropy_mean")
 
             # KL between posterior p(w|theta) and prior p(w)
             with tf.variable_scope("kl"):
@@ -413,7 +414,7 @@ class ModelMushroomRL(ModelBase):
                 kl_schedule = self._kl_schedule / tf.cast(self._batch_size, tf.float32)
 
             # assemble into the final loss
-            self._loss = kl_schedule * kl + mse
+            self._loss = kl_schedule * kl + ce_reduced
 
     def _add_train_op(self):
         with tf.variable_scope("optimizer"):
@@ -440,6 +441,12 @@ class ModelMushroomRL(ModelBase):
 
     def _add_prediction(self):
         with tf.variable_scope("prediction"):
+            # reduce logits into expected reward for policy decision making
+            # shape: [n_sample, batch_size]
+            probs = tf.nn.softmax(self._logits, axis=2, name="softmax")
+            rewards = tf.constant([[self._reward_list]], dtype=tf.float32, name="rewards")
+            self._expected_reward = tf.reduce_sum(probs * rewards, axis=2, name="expected_reward")
+
             # [batch_size]
             self._predicted_reward = tf.reduce_mean(self._expected_reward, axis=0, name="predicted_reward")
 
