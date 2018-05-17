@@ -15,7 +15,6 @@ class ModelMushroomRL(ModelBase):
 
         self._feature_size = 117
         self._n_action = 2
-        self._reward_list = [5.0, 0.0, -35.0]
 
     def build(self):
         # forward propagation
@@ -67,7 +66,7 @@ class ModelMushroomRL(ModelBase):
                         3. n_updates: Number of batches being used within a buffer for each back-propagation.
                                       -1 means using all.
                         4. train_steps: Total number of steps for training
-                        5. sampled_stepds: Number of steps in each sampling
+                        5. sampled_steps: Number of steps in each sampling
         :return: Self
         """
 
@@ -125,13 +124,11 @@ class ModelMushroomRL(ModelBase):
                 actions_batch = actions[index_batch]
                 rewards_batch = rewards[index_batch]
 
-                reward_indices_batch = map(lambda reward: self._reward_list.index(reward), rewards_batch)
-
                 self._sess.run(self._train_op,
                                feed_dict={
                                    self._feature_placeholder: features_batch,
                                    self._action_placeholder: actions_batch,
-                                   self._reward_index_placeholder: reward_indices_batch,
+                                   self._reward_placeholder: rewards_batch,
                                    self._kl_schedule: 1. / (2**(i_batch+1) - 2**((i_batch+1) - n_batches)),
                                })
 
@@ -153,7 +150,7 @@ class ModelMushroomRL(ModelBase):
 
     def predict(self, env, **options):
         """
-        Execution of policy as currently
+        Execution of current policy
 
         :param env: Provided environment to interact with
         :param options: Contain following items:
@@ -172,21 +169,12 @@ class ModelMushroomRL(ModelBase):
         else:
             obs = env.get_observation()
 
-        # function returning expected reward
-        def reward_function(observation, action):
-            return self._sess.run(self._predicted_reward,
-                                  feed_dict={
-                                      self._feature_placeholder: observation[None],
-                                      self._action_placeholder: [action]
-                                  })[0]
-
         # execution
         i_step = 0
         history = []
         while i_step < n_step:
-            # policy: choose the action with largest expected reward
-            rewards = map(lambda action: (action, reward_function(obs, action)), range(self._n_action))
-            action = sorted(rewards, key=lambda x: x[1], reverse=True)[0][0]
+            # execute policy
+            action = self._sess.run(self._predicted_action, feed_dict={self._feature_placeholder: obs[None]})[0]
 
             # cache obs
             obs_cache = obs
@@ -219,18 +207,18 @@ class ModelMushroomRL(ModelBase):
             )
 
             # action index
-            # notice that this is index, before onehot encoding
+            # notice that this is index, NOT one-hot encoding
             self._action_placeholder = tf.placeholder(
                 tf.int32,
                 shape=[None],
                 name="action_placeholder"
             )
 
-            # reward index
-            self._reward_index_placeholder = tf.placeholder(
-                tf.int32,
+            # reward
+            self._reward_placeholder = tf.placeholder(
+                tf.float32,
                 shape=[None],
-                name="reward_index_placeholder"
+                name="reward_placeholder"
             )
 
             # kl scheduler
@@ -289,14 +277,11 @@ class ModelMushroomRL(ModelBase):
         weights_logprob_prior = []
 
         with tf.variable_scope("classifier"):
-            # turn action into onehot encoding (and it will be float32)
-            action_onehot = tf.one_hot(self._action_placeholder, depth=self._n_action, name="action_onehot")
-
             # cast feature vector into float32
             features = tf.cast(self._feature_placeholder, dtype=tf.float32)
 
-            # concatenate with context feature vectors
-            net = tf.concat([features, action_onehot], axis=1)
+            # use contextual features as input layer
+            net = features
 
             # explicit broadcast to: [n_sample, batch_size, input_dim]
             net = tf.expand_dims(net, axis=0, name="layer_input")
@@ -307,15 +292,15 @@ class ModelMushroomRL(ModelBase):
                 with tf.variable_scope("layer_{:d}".format(i_layer)):
                     # determine input dimension
                     if i_layer == 0:
-                        input_dim = self._feature_size + self._n_action
+                        input_dim = self._feature_size   # only context as input
                     else:
                         input_dim = n_hidden_units
 
                     # determine output dimension
                     if i_layer == n_layers:
-                        output_dim = 3  # corresponding to reward list
+                        output_dim = self._n_action  # one output for each action
                     else:
-                        output_dim = self.get_config("n_hidden_units")
+                        output_dim = n_hidden_units
 
                     # kernel
                     with tf.variable_scope("kernel"):
@@ -353,7 +338,7 @@ class ModelMushroomRL(ModelBase):
                         # add them up: [n_sample, batch_size, output_dim]
                         output = tf.add(multiplication, weights_bias_expanded, name="output_linear")
 
-                        if i_layer == self.get_config("n_layers"):
+                        if i_layer == n_layers:
                             # last layer is the final output layer so it must be linear
                             net = output
                         else:
@@ -362,8 +347,8 @@ class ModelMushroomRL(ModelBase):
                             # shape expected for output: [n_sample, batch_size, output_dim]
 
             # cache last output as reward
-            # shape: [n_sample, batch_size, n_class]
-            self._logits = net
+            # shape: [n_sample, batch_size, n_action]
+            self._expected_reward = net
 
             # cache weights posterior / prior
             self._weights_logprob_posterior = weights_logprob_posterior
@@ -376,22 +361,32 @@ class ModelMushroomRL(ModelBase):
         with tf.variable_scope("loss"):
             # P(D|w) / likelihood
             with tf.variable_scope("likelihood"):
-                # shape of reward_index_placeholder: [batch_size]
-                # Need to expand it to be consistent with logits: [n_sample, batch_size]
-                reward_index_expanded = tf.expand_dims(self._reward_index_placeholder,
-                                                       axis=0, name="reward_index_expansion")
-                reward_index_expanded = reward_index_expanded + tf.zeros(shape=[n_sample, 1], dtype=tf.int32)
+                # pick expected rewards corresponding to actions #
 
-                # compute cross-entropy, which is negative of log-p
+                action_onehot = tf.one_hot(self._action_placeholder, self._n_action)  # [batch_size, n_action]
+                action_onehot = tf.expand_dims(action_onehot, axis=0)  # [1, batch_size, n_action]
+                action_onehot = action_onehot + tf.zeros(shape=[n_sample, 1, 1])  # [n_sample, batch_size, n_action]
+
+                expected_reward_per_action = \
+                    tf.reduce_sum(action_onehot * self._expected_reward, axis=2)  # [n_sample, batch_size]
+
+                # reshape observed rewards #
+
+                # shape of reward_placeholder: [batch_size]
+                # Need to expand it to be consistent with expected reward: [n_sample, batch_size]
+                reward_expanded = tf.expand_dims(self._reward_placeholder, axis=0, name="reward_expansion")
+                reward_expanded = reward_expanded + tf.zeros(shape=[n_sample, 1])
+
+                observed_reward_per_action = reward_expanded
+
+                # compute loss, according to BBB #
+
+                # compute mean-squared error, which is negative of log-p
                 # shape should be same as label: [n_sample, batch_size]
-                ce = tf.nn.sparse_softmax_cross_entropy_with_logits(
-                    labels=reward_index_expanded,
-                    logits=self._logits,
-                    name="cross_entropy"
-                )
+                loss_likelihood = tf.square(expected_reward_per_action - observed_reward_per_action)
 
                 # Take average across all dimensions (i.e. across both sampling and batches)
-                ce_reduced = tf.reduce_mean(ce, name="cross_entropy_mean")
+                loss_likelihood = tf.reduce_mean(loss_likelihood, name="loss_likelihood")
 
             # KL between posterior p(w|theta) and prior p(w)
             with tf.variable_scope("kl"):
@@ -414,7 +409,7 @@ class ModelMushroomRL(ModelBase):
                 kl_schedule = self._kl_schedule / tf.cast(self._batch_size, tf.float32)
 
             # assemble into the final loss
-            self._loss = kl_schedule * kl + ce_reduced
+            self._loss = kl_schedule * kl + loss_likelihood
 
     def _add_train_op(self):
         with tf.variable_scope("optimizer"):
@@ -441,14 +436,17 @@ class ModelMushroomRL(ModelBase):
 
     def _add_prediction(self):
         with tf.variable_scope("prediction"):
-            # reduce logits into expected reward for policy decision making
-            # shape: [n_sample, batch_size]
-            probs = tf.nn.softmax(self._logits, axis=2, name="softmax")
-            rewards = tf.constant([[self._reward_list]], dtype=tf.float32, name="rewards")
-            self._expected_reward = tf.reduce_sum(probs * rewards, axis=2, name="expected_reward")
+            # take average of sampling
+            # get [batch_size, n_action]
+            avg_reward = tf.reduce_mean(self._expected_reward, axis=0)
 
-            # [batch_size]
-            self._predicted_reward = tf.reduce_mean(self._expected_reward, axis=0, name="predicted_reward")
+            # then get both the max reward and corresponding action
+            reward_chosen = tf.reduce_max(avg_reward, axis=1)  # [batch_size]
+            action_chosen = tf.argmax(avg_reward, axis=1)  # [batch_size]
+
+            # write out
+            self._predicted_reward = reward_chosen
+            self._predicted_action = action_chosen
 
         return self
 
