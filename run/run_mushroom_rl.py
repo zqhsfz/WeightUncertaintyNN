@@ -37,7 +37,7 @@ if __name__ == "__main__":
         env,
         buffer_size=4096,
         batch_size=64,
-        n_updates=64,
+        n_updates=64*3,
         train_steps=50000,
         sampled_steps=1,
     )

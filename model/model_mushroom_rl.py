@@ -63,8 +63,7 @@ class ModelMushroomRL(ModelBase):
         :param options: Contain following items:
                         1. buffer_size: Size of buffer
                         2. batch_size: The mini-batch size to be used in buffer
-                        3. n_updates: Number of batches being used within a buffer for each back-propagation.
-                                      -1 means using all.
+                        3. n_updates: Number of batches being used for each back-propagation. Must be at least 1.
                         4. train_steps: Total number of steps for training
                         5. sampled_steps: Number of steps in each sampling
         :return: Self
@@ -76,6 +75,8 @@ class ModelMushroomRL(ModelBase):
         n_updates = options["n_updates"]
         train_steps = options["train_steps"]
         sampled_steps = options["sampled_steps"]
+
+        assert n_updates >= 1, "At least one batch per updates!"
 
         # reset environment
         obs, _, _, _ = env.reset()
@@ -90,7 +91,7 @@ class ModelMushroomRL(ModelBase):
         pbar = tqdm(total=train_steps)
         while i_step < train_steps:
             # move forward with current policy
-            sampled_paths = self.predict(env, n_step=sampled_steps, reset=True)
+            sampled_paths = self.predict(env, n_step=sampled_steps, reset=False)
 
             # add to buffer
             buffer.extend(map(lambda x: (x[0], x[1], x[2]), sampled_paths))
@@ -99,38 +100,31 @@ class ModelMushroomRL(ModelBase):
             history += sampled_paths
             cumulative_regret += sum(map(lambda x: x[3] - x[2], sampled_paths))
 
-            # prepare batches
-            buffer_index_array_shuffled = np.random.permutation(len(buffer))
-            buffer_index_batches = utils.prepare_batches(
-                buffer_index_array_shuffled,
-                batch_size=batch_size,
-                keep_remainder=False
-            )
+            # start updating NN only after collecting some amount of data
+            if len(buffer) > 1 * batch_size:
+                # prepare batches
+                buffer_index_batches = [np.random.choice(len(buffer), batch_size, replace=False) for _ in range(n_updates)]
 
-            # select batches randomly
-            # since we already shuffle the indices, we will just pick the first n_batch
-            if n_updates > 0:
-                buffer_index_batches = buffer_index_batches[:n_updates]
+                # loop through batches for updates
+                features, actions, rewards = zip(*buffer)
+                features = np.array(features)
+                actions = np.array(actions)
+                rewards = np.array(rewards)
 
-            # loop through batches for updates
-            features, actions, rewards = zip(*buffer)
-            features = np.array(features)
-            actions = np.array(actions)
-            rewards = np.array(rewards)
+                n_batches = len(buffer_index_batches)
+                for i_batch, index_batch in enumerate(buffer_index_batches):
+                    features_batch = features[index_batch]
+                    actions_batch = actions[index_batch]
+                    rewards_batch = rewards[index_batch]
 
-            n_batches = len(buffer_index_batches)
-            for i_batch, index_batch in enumerate(buffer_index_batches):
-                features_batch = features[index_batch]
-                actions_batch = actions[index_batch]
-                rewards_batch = rewards[index_batch]
-
-                self._sess.run(self._train_op,
-                               feed_dict={
-                                   self._feature_placeholder: features_batch,
-                                   self._action_placeholder: actions_batch,
-                                   self._reward_placeholder: rewards_batch,
-                                   self._kl_schedule: 1. / (2**(i_batch+1) - 2**((i_batch+1) - n_batches)),
-                               })
+                    self._sess.run(self._train_op,
+                                   feed_dict={
+                                       self._feature_placeholder: features_batch,
+                                       self._action_placeholder: actions_batch,
+                                       self._reward_placeholder: rewards_batch,
+                                       # self._kl_schedule: 1. / (2**(i_batch+1) - 2**((i_batch+1) - n_batches)),
+                                       self._kl_schedule: 1. / n_batches,
+                                   })
 
             # tensorboard
             self._record_summary(i_step,
