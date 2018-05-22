@@ -4,5 +4,5 @@ from setuptools import setup
 setup(
     name="weight_uncertainty_nn",
     version="0.0.1",
-    install_requires=["numpy", "pandas", "tqdm", "matplotlib", "tensorflow-gpu", "dill", "gym", "pyarrow"]
+    install_requires=["numpy", "pandas", "tqdm", "matplotlib", "tensorflow", "dill", "gym", "pyarrow"]
 )
