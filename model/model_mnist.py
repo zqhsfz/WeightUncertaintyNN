@@ -60,7 +60,7 @@ class ModelMnist(ModelBase):
 
             for i_epoch in range(n_epoch):
                 # block decay learning rate
-                if (i_epoch > 0) and (i_epoch % lr_decay_block) == 0:
+                if (i_epoch > 0) and (i_epoch % lr_decay_block == 0):
                     lr /= 2.0
 
                 # training for one epoch
