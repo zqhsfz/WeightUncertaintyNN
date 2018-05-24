@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 
-def load_mnist(batch_size, train_indices=None, validation_indices=None):
+def load_mnist(batch_size, train_indices=None, validation_indices=None, validation_frac=0.15):
     """
     Load MNIST data, split it into train/validation sets, and prepare tf dataset out of it
 
@@ -12,6 +12,7 @@ def load_mnist(batch_size, train_indices=None, validation_indices=None):
     :param train_indices: List of index for training set. None by default, in which case random partition would be
                           generated. Non-None input is mainly for re-using previous partition.
     :param validation_indices: Same as train_indices, but for validation set
+    :param validation_frac: Fraction of training data to be used for validation purpose
     :return: Tuple of (train dataset, validation dataset, test dataset, metadata)
                       metadata is a dictionary containing all auxiliary information
     """
@@ -27,7 +28,7 @@ def load_mnist(batch_size, train_indices=None, validation_indices=None):
     if train_indices is None:
         index_shuffle_array = np.random.permutation(x_train.shape[0])
 
-        validation_split = int(x_train.shape[0] * 0.85)
+        validation_split = int(x_train.shape[0] * (1.0 - validation_frac))
         index_train_array = index_shuffle_array[:validation_split]
         index_validation_array = index_shuffle_array[validation_split:]
     else:

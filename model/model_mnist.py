@@ -56,7 +56,13 @@ class ModelMnist(ModelBase):
         # training loop
         with tqdm(total=n_epoch) as pbar:
             lr = self.get_config("lr")
+            lr_decay_block = self.get_config("lr_decay_block")
+
             for i_epoch in range(n_epoch):
+                # block decay learning rate
+                if (i_epoch > 0) and (i_epoch % lr_decay_block) == 0:
+                    lr /= 2.0
+
                 # training for one epoch
                 self._sess.run(training_iterator.initializer)
                 while True:
@@ -249,6 +255,8 @@ class ModelMnist(ModelBase):
         return self
 
     def _add_train_op(self):
+        optimizer_name = self.get_config("optimizer")
+
         with tf.variable_scope("optimizer"):
             self._global_step = tf.get_variable(
                 "train_step",
@@ -258,11 +266,14 @@ class ModelMnist(ModelBase):
                 trainable=False
             )
 
-            optimizer = tf.train.AdamOptimizer(
-                learning_rate=self._lr_placeholder,  # self.get_config("lr", 1e-3),
-                epsilon=self.get_config("adam_epsilon", 1e-8)
-            )
-            # optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
+            if optimizer_name == "sgd":
+                optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._lr_placeholder)
+            elif optimizer_name == "rmsprop":
+                optimizer = tf.train.RMSPropOptimizer(learning_rate=self._lr_placeholder)
+            elif optimizer_name == "adam":
+                optimizer = tf.train.AdamOptimizer(learning_rate=self._lr_placeholder)
+            else:
+                raise NotImplementedError("Unknown optimizer: {:s}".format(optimizer_name))
 
             list_grad_var = optimizer.compute_gradients(self._loss)
             self._train_op = optimizer.apply_gradients(list_grad_var, global_step=self._global_step, name="train_op")
