@@ -18,7 +18,6 @@ class ModelMnistSGLD(ModelMnist):
         :param options: Contains following item
                         1. n_epoch: Number of epochs for training
                         2. train_size: Data size of training data
-                        3. validation_size: Data size of validation data
         :return: Self
         """
 
@@ -26,7 +25,6 @@ class ModelMnistSGLD(ModelMnist):
         n_epoch = options["n_epoch"]
         assert n_epoch >= 1, "At least one epoch is required for training!"
         train_size = options["train_size"]
-        validation_size = options["validation_size"]
 
         # parse training data
         dataset_train, dataset_validation = data_train
@@ -58,15 +56,12 @@ class ModelMnistSGLD(ModelMnist):
             # thinning
             thinning = self.get_config("thinning")
 
-            # number of samples to compute average
-            n_sample = self.get_config("n_sample")
-
             # counter for training loop
             i_train = 0
 
-            # cache for weights
-            weights_cache = deque([], maxlen=n_sample)
-            weights_latest = None
+            # moving average of prediction probability on validation data
+            pred_prob_avg = None
+            sample_decay = 0
 
             for i_epoch in range(n_epoch):
                 # block decay learning rate
@@ -75,8 +70,6 @@ class ModelMnistSGLD(ModelMnist):
 
                 # training for one epoch
                 self._sess.run(training_iterator.initializer)
-                if weights_latest is not None:
-                    self._sess.run(tf.group(*[tf.assign(var, weight) for var, weight in zip(tf.trainable_variables(), weights_latest)]))
                 while True:
                     try:
                         # check if burn-in is over
@@ -99,12 +92,33 @@ class ModelMnistSGLD(ModelMnist):
                             }
                         )
 
-                        # cache weight
+                        # keep track of average prediction probability over sampling ensemble
                         if burnin_over and (i_train % thinning == 0):
-                            weights_snapshot = self._sess.run(tf.trainable_variables())
-                            weights_cache.append(weights_snapshot)
+                            # initialize validation data
+                            self._sess.run(validation_iterator.initializer)
 
-                        weights_latest = self._sess.run(tf.trainable_variables())
+                            # loop through validation data
+                            pred_prob_list = []
+                            while True:
+                                try:
+                                    pred_prob_batch = self._sess.run(
+                                        self._pred_prob,
+                                        feed_dict={
+                                            self._handle: validation_handle,
+                                            self._dropout_placeholder: 1.0
+                                        }
+                                    )
+                                    pred_prob_list.append(pred_prob_batch)
+                                except tf.errors.OutOfRangeError:
+                                    break
+                            pred_prob_sample = np.concatenate(pred_prob_list, axis=0)
+
+                            # update the moving average of prediction probability
+                            sample_decay += 1
+                            if pred_prob_avg is None:
+                                pred_prob_avg = pred_prob_sample
+                            else:
+                                pred_prob_avg += (pred_prob_sample - pred_prob_avg) / sample_decay
 
                         # update counter
                         i_train += 1
@@ -112,25 +126,28 @@ class ModelMnistSGLD(ModelMnist):
                     except tf.errors.OutOfRangeError:
                         break
 
-                # evaluation at the end of epoch, using ensembles
-                train_eval_result = self.evaluate((training_iterator, training_handle), weights_samples=weights_cache)
-                validation_eval_result = self.evaluate((validation_iterator, validation_handle), weights_samples=weights_cache)
+                # evaluation on validation set at the end of epoch
+                result_validation = self.evaluate(
+                    (validation_iterator, validation_handle),
+                    pred_prob=pred_prob_avg
+                )
 
                 # update pbar (per epoch)
                 pbar.update(1)
-                pbar.set_description("Training score: {:.4f}".format(train_eval_result["accuracy"]))
+                pbar.set_description("Validation accuracy: {:.4f}".format(result_validation["accuracy"]))
 
                 # update tensorboard at the end of each epoch
+                summary_op = np.mean
                 self._record_summary(
                     i_epoch,
                     {
-                        self._tb_training_loss_placeholder: train_eval_result["loss"],
-                        self._tb_training_accuracy_placeholder: train_eval_result["accuracy"],
-                        self._tb_training_grad_global_norm_placeholder: train_eval_result["grad_global_norm"],
+                        self._tb_training_loss_placeholder: -1,
+                        self._tb_training_accuracy_placeholder: -1,
+                        self._tb_training_grad_global_norm_placeholder: -1,
 
-                        self._tb_validation_loss_placeholder: validation_eval_result["loss"],
-                        self._tb_validation_accuracy_placeholder: validation_eval_result["accuracy"],
-                        self._tb_validation_grad_global_norm_placeholder: validation_eval_result["grad_global_norm"],
+                        self._tb_validation_loss_placeholder: -1,
+                        self._tb_validation_accuracy_placeholder: result_validation["accuracy"],
+                        self._tb_validation_grad_global_norm_placeholder: -1,
                     }
                 )
 
@@ -140,85 +157,51 @@ class ModelMnistSGLD(ModelMnist):
         """
         Run evaluation ONCE with CURRENT NN parameters
         Notice that no sampling is done here to reduce complication.
+        Also please make sure provided data is deterministic in terms of ordering
 
         :param data_eval: Tuple of (iterator, string_handle)
-                          Provided data must be deterministic in terms of order (i.e. no shuffling)
         :param options: List of following items:
-                        1. weights_samples: List of weights as sampled before
+                        1. pred_prob: nd array of prediction probability on evaluation sample
         :return: A dictionary of
-                 1. loss
-                 2. accuracy
-                 3. grad_global_norm
+                 1. accuracy
         """
 
         # option parsing
-        weights_samples = options["weights_samples"]
-
-        if len(weights_samples) == 0:
-            return dict(
-                loss=-1,
-                accuracy=-1,
-                grad_global_norm=-1,
-            )
+        pred_prob = options["pred_prob"]
 
         # argument parsing
         data_eval_iterator, data_eval_handle = data_eval
 
-        # loop through samples
-        pred_prob_ensemble = []
-        for sample in weights_samples:
-            # assign weights
-            self._sess.run(tf.group(*[tf.assign(var, weight) for var, weight in zip(tf.trainable_variables(), sample)]))
-
-            # initialize data
-            self._sess.run(data_eval_iterator.initializer)
-
-            # make predictions
-            pred_prob_list = []
-            while True:
-                try:
-                    pred_prob_batch = self._sess.run(
-                        self._pred_prob,
-                        feed_dict={
-                            self._handle: data_eval_handle,
-                            self._dropout_placeholder: 1.0,  # no dropout in evaluation
-                        }
-                    )
-                    pred_prob_list.append(pred_prob_batch)
-                except tf.errors.OutOfRangeError:
-                    break
-
-            # concatenate predictions
-            pred_prob_ensemble.append(pred_prob_list)
-
-        # get average prediction
-        pred_prob_avg = np.mean(pred_prob_ensemble, axis=0)
-        pred_class_avg = np.argmax(pred_prob_avg, axis=-1)
-
-        # initialization (again)
+        # initialization
         self._sess.run([
-            data_eval_iterator.initializer,
-            self._metric_accuracy_initializer,
+            data_eval_iterator.initializer,       # data initialization
         ])
 
-        # loop through batches
-        for pred_class_batch in pred_class_avg:
-            self._sess.run(
-                self._metric_accuracy_update,
-                feed_dict={
-                    self._handle: data_eval_handle,
-                    self._pred_class: pred_class_batch,
-                }
-            )
+        # get labels
+        label_list = []
+        while True:
+            try:
+                label_batch = self._sess.run(
+                    self._label_placeholder,
+                    feed_dict={
+                        self._handle: data_eval_handle
+                    }
+                )
+                label_list.append(label_batch)
+            except tf.errors.OutOfRangeError:
+                break
+        label = np.concatenate(label_list, axis=0)
 
-        # extract metric
-        accuracy = self._sess.run(self._metric_accuracy)
+        # match with prediction probability
+        pred_label = np.argmax(pred_prob, axis=1)
+
+        assert len(pred_label) == len(label), "Inconsistent prediction and labels!"
+
+        accuracy = 1.0 * np.sum(pred_label == label) / len(pred_label)
 
         # return
         return dict(
-            loss=-1,
-            accuracy=accuracy,
-            grad_global_norm=-1,
+            accuracy=accuracy
         )
 
     ####################################################################################################################

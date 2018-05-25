@@ -12,7 +12,7 @@ from run.utils import load_mnist
 if __name__ == "__main__":
     batch_size = 100
     n_epoch = 100
-    output_path = "pSGLD/400/RMSProp/run1"
+    output_path = "pSGLD/1200/SGD/run1"
 
     # delete path
     if os.path.exists(output_path):
@@ -30,9 +30,9 @@ if __name__ == "__main__":
             "model_save_freq": 100,
             # NN
             "n_layers": 2,
-            "n_hidden_units": 400,
-            "optimizer": "rmsprop",
-            "lr": 5e-4,
+            "n_hidden_units": 1200,
+            "optimizer": "sgd",
+            "lr": 5e-1,
             "lr_decay_block": 20,
             "dropout": 1.0,
         },

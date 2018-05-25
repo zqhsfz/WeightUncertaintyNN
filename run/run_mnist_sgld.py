@@ -12,7 +12,7 @@ from run.utils import load_mnist
 if __name__ == "__main__":
     batch_size = 100
     n_epoch = 100
-    output_path = "pSGLD/400/SGLD/run1"
+    output_path = "pSGLD/1200/SGLD/run3"
 
     # delete path
     if os.path.exists(output_path):
@@ -29,7 +29,7 @@ if __name__ == "__main__":
             "output_path": output_path,
             # NN
             "n_layers": 2,
-            "n_hidden_units": 400,
+            "n_hidden_units": 1200,
             # SGLD
             "prior_log_sigma": 0.,
             "lr": 5e-1,
@@ -37,7 +37,6 @@ if __name__ == "__main__":
             "burnin": 300,
             "prenoise": 0,
             "thinning": 100,
-            "n_sample": 10,
         },
     ).build().initialize()
 
@@ -46,11 +45,5 @@ if __name__ == "__main__":
         (dataset_train, dataset_test),
         n_epoch=n_epoch,
         train_size=metadata["train_size"],
-        validation_size=metadata["test_size"]
     )
 
-    print "===> TEST RESULT <==="
-    # from last sample
-    test_result = model.evaluate_standalone(dataset_test, eval_size=metadata["test_size"])
-    print "From last sample:", test_result
-    dill.dump(test_result, open(output_path+"/test_result.dill", "w"))
