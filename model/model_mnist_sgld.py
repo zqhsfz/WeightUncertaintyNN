@@ -1,14 +1,10 @@
-# Baseline using normal DNN with dropout regularization
+# NN with SGLD
 import tensorflow as tf
 from tqdm import tqdm
 from collections import deque
 import numpy as np
 
 from model.model_mnist import ModelMnist
-
-
-def extract_from_result_cache(data, key, agg_func):
-    return agg_func(map(lambda x: x[key], data))
 
 
 class ModelMnistSGLD(ModelMnist):
@@ -281,20 +277,6 @@ class ModelMnistSGLD(ModelMnist):
 
             # inject noise if enabled
             stddev = tf.where(self._prenoise_over_placeholder, tf.rsqrt(0.5 * self._lr_placeholder), tf.zeros([]))
-            # # This is the standard version. However notice that gradient will be super big here so a very small
-            # # step size is needed
-            # list_grad_var_injected = \
-            #     [(0.5 * self._data_size_placeholder * grad + stddev * tf.random_normal(var.get_shape()), var)
-            #      for grad, var in list_grad_var_clipped]
-            # # Scale update by 1/N
-            # list_grad_var_injected = \
-            #     [(grad + stddev * tf.random_normal(var.get_shape()) / self._data_size_placeholder, var)
-            #      for grad, var in list_grad_var_clipped]
-            # # Scale mean by 1/N, but std by 1/sqrt(N)
-            # list_grad_var_injected = \
-            #     [(grad + stddev * tf.random_normal(var.get_shape()) / tf.sqrt(self._data_size_placeholder), var)
-            #      for grad, var in list_grad_var_clipped]
-            # scale mean by 1/N, by std by N^-alpha
             list_grad_var_injected = \
                 [(grad + stddev * tf.random_normal(var.get_shape()) / tf.pow(self._data_size_placeholder, noise_factor), var)
                  for grad, var in list_grad_var_clipped]
