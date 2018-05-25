@@ -250,8 +250,8 @@ class ModelMnistSGLD(ModelMnist):
             self._loss_prior = tf.divide(loss_prior, self._data_size_placeholder, name="loss_prior")
 
             # adds up
-            # self._loss = self._loss_likelihood + self._loss_prior
-            self._loss = self._loss_likelihood  # no prior
+            self._loss = self._loss_likelihood + self._loss_prior
+            # self._loss = self._loss_likelihood  # no prior
 
         return self
 

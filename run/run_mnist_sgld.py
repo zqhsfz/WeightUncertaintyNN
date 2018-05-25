@@ -12,7 +12,7 @@ from run.utils import load_mnist
 if __name__ == "__main__":
     batch_size = 100
     n_epoch = 100
-    output_path = "pSGLD/1200/SGLD/run3"
+    output_path = "pSGLD/1200/SGLD/run2"
 
     # delete path
     if os.path.exists(output_path):
