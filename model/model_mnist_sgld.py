@@ -85,7 +85,7 @@ class ModelMnistSGLD(ModelMnist):
                             self._train_op,
                             feed_dict={
                                 self._handle: training_handle,
-                                self._lr_placeholder: lr,
+                                self._lr_placeholder: lr,  # * ((1 + i_train)**-0.55),
                                 self._dropout_placeholder: 1.0,
                                 self._prenoise_over_placeholder: prenoise_over,
                                 self._data_size_placeholder: train_size,
@@ -127,10 +127,15 @@ class ModelMnistSGLD(ModelMnist):
                         break
 
                 # evaluation on validation set at the end of epoch
-                result_validation = self.evaluate(
-                    (validation_iterator, validation_handle),
-                    pred_prob=pred_prob_avg
-                )
+                if pred_prob_avg is None:
+                    result_validation = dict(
+                        accuracy=-1
+                    )
+                else:
+                    result_validation = self.evaluate(
+                        (validation_iterator, validation_handle),
+                        pred_prob=pred_prob_avg
+                    )
 
                 # update pbar (per epoch)
                 pbar.update(1)
@@ -256,6 +261,8 @@ class ModelMnistSGLD(ModelMnist):
         return self
 
     def _add_train_op(self):
+        noise_factor = self.get_config("noise_factor")
+
         with tf.variable_scope("optimizer"):
             self._global_step = tf.get_variable(
                 "train_step",
@@ -274,11 +281,22 @@ class ModelMnistSGLD(ModelMnist):
 
             # inject noise if enabled
             stddev = tf.where(self._prenoise_over_placeholder, tf.rsqrt(0.5 * self._lr_placeholder), tf.zeros([]))
+            # # This is the standard version. However notice that gradient will be super big here so a very small
+            # # step size is needed
             # list_grad_var_injected = \
             #     [(0.5 * self._data_size_placeholder * grad + stddev * tf.random_normal(var.get_shape()), var)
             #      for grad, var in list_grad_var_clipped]
+            # # Scale update by 1/N
+            # list_grad_var_injected = \
+            #     [(grad + stddev * tf.random_normal(var.get_shape()) / self._data_size_placeholder, var)
+            #      for grad, var in list_grad_var_clipped]
+            # # Scale mean by 1/N, but std by 1/sqrt(N)
+            # list_grad_var_injected = \
+            #     [(grad + stddev * tf.random_normal(var.get_shape()) / tf.sqrt(self._data_size_placeholder), var)
+            #      for grad, var in list_grad_var_clipped]
+            # scale mean by 1/N, by std by N^-alpha
             list_grad_var_injected = \
-                [(grad + stddev * tf.random_normal(var.get_shape()) / self._data_size_placeholder, var)
+                [(grad + stddev * tf.random_normal(var.get_shape()) / tf.pow(self._data_size_placeholder, noise_factor), var)
                  for grad, var in list_grad_var_clipped]
 
             # apply gradients

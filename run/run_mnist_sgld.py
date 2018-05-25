@@ -12,7 +12,7 @@ from run.utils import load_mnist
 if __name__ == "__main__":
     batch_size = 100
     n_epoch = 100
-    output_path = "pSGLD/1200/SGLD/run2"
+    output_path = "pSGLD/1200/SGLD/test"
 
     # delete path
     if os.path.exists(output_path):
@@ -35,6 +35,7 @@ if __name__ == "__main__":
             "lr": 5e-1,
             "lr_decay_block": 20,
             "burnin": 300,
+            "noise_factor": 0.75,
             "prenoise": 0,
             "thinning": 100,
         },
