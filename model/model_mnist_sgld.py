@@ -19,7 +19,7 @@ class ModelMnistSGLD(ModelMnist):
                         1. n_epoch: Number of epochs for training
                         2. train_size: Data size of training data
                         3. validation_size: Data size of validation data
-        :return: evaluation cache
+        :return: Self
         """
 
         # parse options
@@ -64,9 +64,9 @@ class ModelMnistSGLD(ModelMnist):
             # counter for training loop
             i_train = 0
 
-            # cache for evaluation result
-            train_eval_result_cache = deque([], maxlen=n_sample)
-            validation_eval_result_cache = deque([], maxlen=n_sample)
+            # cache for weights
+            weights_cache = deque([], maxlen=n_sample)
+            weights_latest = None
 
             for i_epoch in range(n_epoch):
                 # block decay learning rate
@@ -75,6 +75,8 @@ class ModelMnistSGLD(ModelMnist):
 
                 # training for one epoch
                 self._sess.run(training_iterator.initializer)
+                if weights_latest is not None:
+                    self._sess.run(tf.group(*[tf.assign(var, weight) for var, weight in zip(tf.trainable_variables(), weights_latest)]))
                 while True:
                     try:
                         # check if burn-in is over
@@ -97,13 +99,12 @@ class ModelMnistSGLD(ModelMnist):
                             }
                         )
 
-                        # run evaluation with current NN
+                        # cache weight
                         if burnin_over and (i_train % thinning == 0):
-                            result_training = self.evaluate((training_iterator, training_handle), eval_size=train_size)
-                            result_validation = self.evaluate((validation_iterator, validation_handle), eval_size=validation_size)
+                            weights_snapshot = self._sess.run(tf.trainable_variables())
+                            weights_cache.append(weights_snapshot)
 
-                            train_eval_result_cache.append(result_training)
-                            validation_eval_result_cache.append(result_validation)
+                        weights_latest = self._sess.run(tf.trainable_variables())
 
                         # update counter
                         i_train += 1
@@ -111,26 +112,29 @@ class ModelMnistSGLD(ModelMnist):
                     except tf.errors.OutOfRangeError:
                         break
 
+                # evaluation at the end of epoch, using ensembles
+                train_eval_result = self.evaluate((training_iterator, training_handle), weights_samples=weights_cache)
+                validation_eval_result = self.evaluate((validation_iterator, validation_handle), weights_samples=weights_cache)
+
                 # update pbar (per epoch)
                 pbar.update(1)
-                pbar.set_description("Training loss: {:.4f}".format(extract_from_result_cache(train_eval_result_cache, "loss", np.mean)))  # average
+                pbar.set_description("Training score: {:.4f}".format(train_eval_result["accuracy"]))
 
                 # update tensorboard at the end of each epoch
-                summary_op = np.mean
                 self._record_summary(
                     i_epoch,
                     {
-                        self._tb_training_loss_placeholder: extract_from_result_cache(train_eval_result_cache, "loss", summary_op),
-                        self._tb_training_accuracy_placeholder: extract_from_result_cache(train_eval_result_cache, "accuracy", summary_op),
-                        self._tb_training_grad_global_norm_placeholder: extract_from_result_cache(train_eval_result_cache, "grad_global_norm", summary_op),
+                        self._tb_training_loss_placeholder: train_eval_result["loss"],
+                        self._tb_training_accuracy_placeholder: train_eval_result["accuracy"],
+                        self._tb_training_grad_global_norm_placeholder: train_eval_result["grad_global_norm"],
 
-                        self._tb_validation_loss_placeholder: extract_from_result_cache(validation_eval_result_cache, "loss", summary_op),
-                        self._tb_validation_accuracy_placeholder: extract_from_result_cache(validation_eval_result_cache, "accuracy", summary_op),
-                        self._tb_validation_grad_global_norm_placeholder: extract_from_result_cache(validation_eval_result_cache, "grad_global_norm", summary_op),
+                        self._tb_validation_loss_placeholder: validation_eval_result["loss"],
+                        self._tb_validation_accuracy_placeholder: validation_eval_result["accuracy"],
+                        self._tb_validation_grad_global_norm_placeholder: validation_eval_result["grad_global_norm"],
                     }
                 )
 
-        return train_eval_result_cache, validation_eval_result_cache
+        return self
 
     def evaluate(self, data_eval, **options):
         """
@@ -138,8 +142,9 @@ class ModelMnistSGLD(ModelMnist):
         Notice that no sampling is done here to reduce complication.
 
         :param data_eval: Tuple of (iterator, string_handle)
+                          Provided data must be deterministic in terms of order (i.e. no shuffling)
         :param options: List of following items:
-                        1. eval_size: Data size of evaluation data
+                        1. weights_samples: List of weights as sampled before
         :return: A dictionary of
                  1. loss
                  2. accuracy
@@ -147,60 +152,73 @@ class ModelMnistSGLD(ModelMnist):
         """
 
         # option parsing
-        eval_size = options["eval_size"]
+        weights_samples = options["weights_samples"]
+
+        if len(weights_samples) == 0:
+            return dict(
+                loss=-1,
+                accuracy=-1,
+                grad_global_norm=-1,
+            )
 
         # argument parsing
         data_eval_iterator, data_eval_handle = data_eval
 
-        # initialization
+        # loop through samples
+        pred_prob_ensemble = []
+        for sample in weights_samples:
+            # assign weights
+            self._sess.run(tf.group(*[tf.assign(var, weight) for var, weight in zip(tf.trainable_variables(), sample)]))
+
+            # initialize data
+            self._sess.run(data_eval_iterator.initializer)
+
+            # make predictions
+            pred_prob_list = []
+            while True:
+                try:
+                    pred_prob_batch = self._sess.run(
+                        self._pred_prob,
+                        feed_dict={
+                            self._handle: data_eval_handle,
+                            self._dropout_placeholder: 1.0,  # no dropout in evaluation
+                        }
+                    )
+                    pred_prob_list.append(pred_prob_batch)
+                except tf.errors.OutOfRangeError:
+                    break
+
+            # concatenate predictions
+            pred_prob_ensemble.append(pred_prob_list)
+
+        # get average prediction
+        pred_prob_avg = np.mean(pred_prob_ensemble, axis=0)
+        pred_class_avg = np.argmax(pred_prob_avg, axis=-1)
+
+        # initialization (again)
         self._sess.run([
-            data_eval_iterator.initializer,       # data initialization
-            self._metric_accuracy_initializer,    # metric of accuracy initialization
+            data_eval_iterator.initializer,
+            self._metric_accuracy_initializer,
         ])
 
         # loop through batches
-        count = 0                  # counting on data points
-        count_batch = 0            # counting on updates (batches)
-        loss_all = 0.              # mean of the loss across whole dataset
-        grad_global_norm_all = 0.  # mean of the global gradients across all updates (in one epoch)
-        while True:
-            try:
-                batch_size, loss_batch, grad_global_norm_batch, _, loss_likelihood, loss_prior = self._sess.run(
-                    [
-                        self._batch_size,
-                        self._loss,
-                        self._grad_global_norm,
-                        self._metric_accuracy_update,
-                        # DEBUG
-                        self._loss_likelihood,
-                        self._loss_prior
-                    ],
-                    feed_dict={
-                        self._handle: data_eval_handle,
-                        self._dropout_placeholder: 1.0,  # no dropout in evaluation
-                        self._data_size_placeholder: eval_size,
-                    }
-                )
+        for pred_class_batch in pred_class_avg:
+            self._sess.run(
+                self._metric_accuracy_update,
+                feed_dict={
+                    self._handle: data_eval_handle,
+                    self._pred_class: pred_class_batch,
+                }
+            )
 
-                count += batch_size
-                count_batch += 1
+        # extract metric
+        accuracy = self._sess.run(self._metric_accuracy)
 
-                if loss_batch == float('inf'):
-                    print "WARNING! Infinite loss encountered!"
-                    print loss_likelihood, loss_prior
-
-                loss_all += 1.0 * (loss_batch - loss_all) * batch_size / count
-                grad_global_norm_all += 1.0 * (grad_global_norm_batch - grad_global_norm_all) / count_batch
-            except tf.errors.OutOfRangeError:
-                break
-
-        # extract metrics
-        accuracy_all = self._sess.run(self._metric_accuracy)
-
+        # return
         return dict(
-            loss=loss_all,
-            accuracy=accuracy_all,
-            grad_global_norm=grad_global_norm_all,
+            loss=-1,
+            accuracy=accuracy,
+            grad_global_norm=-1,
         )
 
     ####################################################################################################################
@@ -229,32 +247,6 @@ class ModelMnistSGLD(ModelMnist):
             self._batch_size = tf.shape(self._label_placeholder)[0]
 
         return self
-
-    # def _add_classifier(self):
-    #     with tf.variable_scope("classifier"):
-    #         net = tf.layers.flatten(self._image_placeholder, name="layer_input") / 128.0
-    #         for i_layer in range(self.get_config("n_layers")):
-    #             net = tf.layers.dense(
-    #                 net,
-    #                 units=self.get_config("n_hidden_units"),
-    #                 activation=tf.nn.relu,
-    #                 kernel_initializer=tf.random_normal_initializer(),
-    #                 bias_initializer=tf.random_normal_initializer(),
-    #                 name="layer_{:d}".format(i_layer)
-    #             )
-    #             net = tf.nn.dropout(net, keep_prob=self._dropout_placeholder, name="layer_{:d}_dropout".format(i_layer))
-    #         net = tf.layers.dense(
-    #             net,
-    #             units=self._n_class,
-    #             activation=None,
-    #             kernel_initializer=tf.random_normal_initializer(),
-    #             bias_initializer=tf.random_normal_initializer(),
-    #             name="layer_output"
-    #         )
-    #
-    #         self._logits = net
-    #
-    #     return self
 
     def _add_loss(self):
         prior_log_sigma = self.get_config("prior_log_sigma")

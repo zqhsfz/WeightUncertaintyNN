@@ -42,7 +42,7 @@ if __name__ == "__main__":
     ).build().initialize()
 
     # monitor test data result directly
-    train_result_cache, validation_result_cache = model.train(
+    model.train(
         (dataset_train, dataset_test),
         n_epoch=n_epoch,
         train_size=metadata["train_size"],
